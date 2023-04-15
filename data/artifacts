@@ -1,0 +1,5 @@
+org.eclipse.jetty:jetty-server
+org.xerial:sqlite-jdbc
+org.apache.shiro:shiro-core
+org.glassfish.jersey.core:jersey-client
+org.springframework:spring-context
