@@ -1,7 +1,12 @@
+pub mod ignore_before;
+
+pub use ignore_before::*;
+
 use std::fmt::{Display, Formatter};
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-use chrono::{Datelike, TimeZone};
+use std::fs::{File};
+use std::io::{Read};
+use std::path::{PathBuf};
+use chrono::{ DateTime, TimeZone, Utc};
 use reqwest::Client;
 use crate::prelude::*;
 
@@ -14,34 +19,52 @@ pub struct Artifact {
     pub(crate) artifact_id: String,
 }
 
+pub struct ArtifactInfo {
+    pub(crate) version: String,
+    pub(crate) released: DateTime<Utc>,
+}
+
 impl Display for Artifact {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", f!("{}:{}", self.group_id, self.artifact_id))
     }
 }
 
-impl TryFrom<String> for Artifact {
+impl TryFrom<&str> for Artifact {
     type Error = Error;
 
-    fn try_from(value: String) -> std::result::Result<Self, Self::Error> {
+    fn try_from(value: &str) -> Result<Self> {
         let mut parts = value.split(":");
-        let g = parts.next().ok_or("Malformed artifact")?;
-        let a = parts.next().ok_or("Malformed group")?;
-        Ok(Artifact {
-            group_id: g.to_string(),
-            artifact_id: a.to_string(),
-        })
+        let g = parts.next();
+        let a = parts.next();
+
+        if g.is_some() && a.is_some() {
+            let g = g.unwrap();
+            let a = a.unwrap();
+            if g.is_empty() || a.is_empty() {
+                return Err(f!("invalid artifact: {value}").into());
+            }
+            Ok(Artifact {
+                group_id: g.to_string(),
+                artifact_id: a.to_string(),
+            })
+        } else {
+            Err(f!("invalid artifact: {value}").into())
+        }
     }
 }
 
-pub fn read_data() -> Result<Vec<Artifact>> {
-    let reader = BufReader::new(File::open("data/artifacts")?);
-
-    Ok(reader.lines().map(|line| line.unwrap().try_into().unwrap()).collect())
+pub fn artifact_file_to_string(path: PathBuf) -> Result<String> {
+    let mut buf = String::new();
+    File::open(path)?.read_to_string(&mut buf)?;
+    Ok(buf)
 }
 
-pub async fn info_for(client: &Client, artifact: &Artifact) -> Result<String> {
+pub fn parse_artifact_data(config_data: String) -> Vec<Result<Artifact>> {
+    config_data.lines().filter(|l| !l.is_empty()).map(|l| l.try_into()).collect()
+}
 
+pub async fn info_for(client: &Client, artifact: &Artifact) -> Result<ArtifactInfo> {
     let artifact_id = &artifact.artifact_id;
     let group_id = &artifact.group_id;
 
@@ -52,11 +75,44 @@ pub async fn info_for(client: &Client, artifact: &Artifact) -> Result<String> {
     let version = doc.get("v").ok_or("Failed to find version")?.as_str().ok_or("Failed to read version as string")?;
     let ts = doc.get("timestamp").unwrap().as_i64().unwrap();
 
-    let utc = chrono::Utc.timestamp_millis_opt(ts);
+    let utc = Utc.timestamp_millis_opt(ts);
     if let chrono::LocalResult::Single(date) = utc {
-
-        Ok(f!("{} version {}\nreleased {}-{}-{}", artifact_id, version, date.month(), date.day(), date.year()))
+        Ok(ArtifactInfo {
+            version: version.to_string(),
+            released: date,
+        })
     } else {
         Err(Error::TimeParseFail)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_artifact_data() {
+        let good_data = vec![
+            "org.apache.commons:commons-lang3",
+            "org.apache.shiro:shiro-core",
+            "org.eclipse.jetty:jetty-server",
+        ];
+
+        let bad_data = vec![
+            "",
+            ":",
+            "abc",
+            "abc:",
+        ];
+
+        for data in good_data {
+            let artifact: Artifact = data.try_into().unwrap();
+            assert_eq!(artifact.group_id, data.split(":").next().unwrap());
+            assert_eq!(artifact.artifact_id, data.split(":").last().unwrap());
+        }
+
+        for data in bad_data {
+            assert!(TryInto::<Artifact>::try_into(data).is_err());
+        }
     }
 }

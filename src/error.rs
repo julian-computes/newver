@@ -1,3 +1,5 @@
+use std::num::ParseIntError;
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
@@ -9,12 +11,24 @@ pub enum Error {
     #[error("Failed to parse time")]
     TimeParseFail,
 
+    #[error(transparent)]
+    IgnoreBeforeFail(#[from] ParseIntError),
+
+    #[error(transparent)]
+    VarError(#[from] std::env::VarError),
+
     #[error("Error")]
-    Error(String),
+    NewVerError(String),
+}
+
+impl From<String> for Error {
+    fn from(value: String) -> Self {
+        Error::NewVerError(value)
+    }
 }
 
 impl From<&'static str> for Error {
     fn from(value: &'static str) -> Self {
-        Error::Error(value.to_string())
+        Error::NewVerError(value.to_string())
     }
 }
